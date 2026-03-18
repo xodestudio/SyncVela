@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum for Group Roles
+enum ParticipantRole {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Participant[]
+  messages      Message[]
+
+  @@map("users")
+}
+
+model Conversation {
+  id            String   @id @default(cuid())
+  name          String? // Group chat name
+  isGroup       Boolean  @default(false)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  participants Participant[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model Participant {
+  id         String          @id @default(cuid())
+  role       ParticipantRole @default(MEMBER) // Admin tracking for groups
+  lastReadAt DateTime? // Unread messages calculation
+  joinedAt   DateTime        @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@index([conversationId])
+  @@map("participants")
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  sequenceId Int      @unique @default(autoincrement()) // Cursor pagination optimization
+  content    String
+  createdAt  DateTime @default(now())
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@map("messages")
+}
