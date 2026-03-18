@@ -4,6 +4,10 @@ import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import prisma from "./config/db";
+import {
+  socketAuthMiddleware,
+  AuthenticatedSocket,
+} from "./middlewares/authMiddleware";
 
 // ROUTES IMPORT
 import authRoutes from "./routes/authRoutes";
@@ -42,6 +46,9 @@ app.get("/api/health", (req, res) => {
 });
 
 io.on("connection", (socket) => {
+  // Yahan humne Type cast kiya taake TypeScript ko pata chale isme user data hai
+  const authenticatedSocket = socket as AuthenticatedSocket;
+
   console.log(`🟢 New Client Connected: ${socket.id}`);
   socket.on("disconnect", () => {
     console.log(`🔴 Client Disconnected: ${socket.id}`);
@@ -50,23 +57,9 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 5000;
 
-// FAIL-FAST BOOTSTRAP (WITH TYPESCRIPT FIX)
-prisma
-  .$connect()
-  .then(() => {
-    console.log("📦 Connected to NeonDB successfully.");
-
-    server.listen(PORT, () => {
-      console.log(
-        `🚀 Server running in ${process.env.NODE_ENV || "development"} mode on port ${PORT}`,
-      );
-    });
-  })
-  .catch((error: unknown) => {
-    // <-- TS ERROR FIXED HERE
-    console.error(
-      "❌ Database connection failed. Server shutting down.",
-      error,
-    );
-    process.exit(1);
-  });
+// Prisma ab "Lazy" mode mein connect hoga (jab pehli API hit hogi)
+server.listen(PORT, () => {
+  console.log(
+    `🚀 Server running in ${process.env.NODE_ENV || "development"} mode on port ${PORT}`,
+  );
+});
