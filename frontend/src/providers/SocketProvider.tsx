@@ -1,9 +1,9 @@
-"use client"; // Next.js ko batana ke yeh strictly browser mein chalega
+"use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { io, Socket } from "socket.io-client";
+import { useAuthStore } from "@/src/store/authStore";
 
-// TypeScript Definition
 interface SocketContextType {
   socket: Socket | null;
   isConnected: boolean;
@@ -20,18 +20,26 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  useEffect(() => {
-    // ABHI KE LIYE: Hum Postman wala token hardcode karenge testing ke liye.
-    // Asli app mein yeh localStorage ya Next.js cookies se aayega.
-    const token =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbW5vNDd3cGYwMDAwcGN4NGJrYjhsMzd1IiwiaWF0IjoxNzc1NTM1ODgwLCJleHAiOjE3NzYxNDA2ODB9.i_2bGPlBwcBg8Oi0NyvuI_WEYy2-pPqMMBSsK4nhIxI";
+  // NAYA: Auth store se token nikalna
+  const { token, isAuthenticated } = useAuthStore();
 
-    // Connection establish karna (Backend ka URL)
+  useEffect(() => {
+    // Agar user logged in nahi hai, toh socket connect karne ki koshish bhi mat karo
+    if (!isAuthenticated || !token) {
+      if (socket) {
+        socket.disconnect();
+        setSocket(null);
+        setIsConnected(false);
+      }
+      return;
+    }
+
+    // Ab token hardcoded nahi hai, balkay actual user ka zinda token hai
     const socketInstance = io(
       process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000",
       {
         auth: {
-          token: token, // Frontend strictly 'auth' object use karta hai (Backend isay catch karega)
+          token: token,
         },
       },
     );
@@ -48,11 +56,10 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
     setSocket(socketInstance);
 
-    // CLEANUP: The Senior Move. Agar component unmount ho, toh connection leak na ho.
     return () => {
       socketInstance.disconnect();
     };
-  }, []);
+  }, [token, isAuthenticated]); // Dependency array: Jab bhi token badlega, yeh dobara chalega
 
   return (
     <SocketContext.Provider value={{ socket, isConnected }}>

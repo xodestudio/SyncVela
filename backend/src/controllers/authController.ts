@@ -58,3 +58,53 @@ export const registerUser = async (
     res.status(500).json({ error: "Internal server error." });
   }
 };
+
+export const loginUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    // 1. Basic validation
+    if (!email || !password) {
+      res.status(400).json({ error: "Email aur password dono zaroori hain." });
+      return;
+    }
+
+    // 2. Database mein user dhoondo
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // Security Tip: Kabhi mat batao ke email galat hai ya password, sirf "Invalid credentials" bolo
+      res.status(401).json({ error: "Email ya password galat hai." });
+      return;
+    }
+
+    // 3. Password match karo
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      res.status(401).json({ error: "Email ya password galat hai." });
+      return;
+    }
+
+    // 4. Token generate karo
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET as string,
+      { expiresIn: "7d" }, // 7 din baad user auto-logout hoga
+    );
+
+    // 5. Success Response
+    res.status(200).json({
+      message: "Login successful",
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Login Error:", error);
+    res
+      .status(500)
+      .json({ error: "Server mein masla hai, baad mein try karein." });
+  }
+};

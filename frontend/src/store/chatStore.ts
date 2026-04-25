@@ -1,6 +1,5 @@
 import { create } from "zustand";
 
-// 1. Strict TypeScript Interfaces
 export interface Message {
   id: string;
   text: string;
@@ -8,34 +7,72 @@ export interface Message {
   createdAt: string;
 }
 
-interface ChatState {
-  messages: Message[];
-  isTyping: boolean;
-  isLoading: boolean;
-
-  // Actions
-  addMessage: (message: Message) => void;
-  setMessages: (messages: Message[]) => void;
-  setTypingStatus: (status: boolean) => void;
-  setLoading: (status: boolean) => void;
+export interface SidebarUser {
+  id: string;
+  name: string;
+  email: string;
 }
 
-// 2. The Zustand Engine
+interface ChatState {
+  messages: Message[];
+  users: SidebarUser[]; // Sidebar ke contacts
+  selectedUser: SidebarUser | null; // Jis se baat ho rahi hai
+  activeRoomId: string | null; // Private kamre ki ID
+  isLoading: boolean;
+  isTyping: boolean;
+  onlineUsers: string[];
+  unreadCounts: Record<string, number>;
+
+  addMessage: (message: Message) => void;
+  setMessages: (messages: Message[]) => void;
+  setUsers: (users: SidebarUser[]) => void;
+  setSelectedUser: (user: SidebarUser | null) => void;
+  setActiveRoomId: (id: string | null) => void;
+  setLoading: (status: boolean) => void;
+  setTypingStatus: (status: boolean) => void;
+  setOnlineUsers: (userIds: string[]) => void;
+  incrementUnread: (userId: string) => void;
+  clearUnread: (userId: string) => void;
+}
+
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
+  users: [],
+  selectedUser: null,
+  activeRoomId: null,
+  isLoading: false,
   isTyping: false,
-  isLoading: true, // Default true rakho kyunke page load hote hi data aana hai
+  onlineUsers: [],
+  unreadCounts: {},
 
-  // Naya message aane par purane messages ke array mein add karna
   addMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
-
-  // Pehli dafa chat load hone par database ki history set karna
-  setMessages: (messages) => set({ messages }),
-
-  // Typing indicator ko toggle karna
-  setTypingStatus: (status) => set({ isTyping: status }),
-
-  // Loading state ko toggle karna
+  setMessages: (messages) => set({ messages, isLoading: false }),
+  setUsers: (users) => set({ users }),
+  setActiveRoomId: (id) => set({ activeRoomId: id }),
   setLoading: (status) => set({ isLoading: status }),
+  setTypingStatus: (status) => set({ isTyping: status }),
+  setOnlineUsers: (userIds) => set({ onlineUsers: userIds }),
+  incrementUnread: (userId) =>
+    set((state) => ({
+      unreadCounts: {
+        ...state.unreadCounts,
+        [userId]: (state.unreadCounts[userId] || 0) + 1,
+      },
+    })),
+
+  clearUnread: (userId) =>
+    set((state) => ({
+      unreadCounts: {
+        ...state.unreadCounts,
+        [userId]: 0,
+      },
+    })),
+  setSelectedUser: (user) =>
+    set((state) => ({
+      selectedUser: user,
+      messages: [],
+      activeRoomId: null,
+      unreadCounts: { ...state.unreadCounts, [user?.id || ""]: 0 }, // Click karte hi badge clear!
+    })),
 }));

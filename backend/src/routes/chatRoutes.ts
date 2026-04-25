@@ -1,9 +1,13 @@
 import express from "express";
-import { getGlobalMessages } from "../controllers/chatController";
+import {
+  getPrivateMessages,
+  getUnreadCounts,
+} from "../controllers/chatController";
 
 const router = express.Router();
 
-// GET /api/chat/history
-router.get("/history", getGlobalMessages);
+// GET /api/chat/:roomId/messages
+router.get("/unread-counts", getUnreadCounts);
+router.get("/:roomId/messages", getPrivateMessages);
 
 export default router;
