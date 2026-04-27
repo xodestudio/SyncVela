@@ -4,7 +4,7 @@ import prisma from "../config/db";
 
 interface MarkReadPayload {
   roomId: string;
-  targetUserId: string; // Jis bande ke messages maine parh liye
+  targetUserId: string;
 }
 
 export const handleChatEvents = (io: Server, socket: AuthenticatedSocket) => {
@@ -43,17 +43,24 @@ export const handleChatEvents = (io: Server, socket: AuthenticatedSocket) => {
     }
   });
 
-  // 2. Sending Messages (Updated for Direct Routing)
+  // 2. Sending Messages (Updated for Direct Routing & Timestamp Engine)
   socket.on(
     "sendPrivateMessage",
     async (payload: { roomId: string; text: string; targetUserId: string }) => {
       try {
+        // A. Pehle message database mein save karo
         const savedMessage = await prisma.message.create({
           data: {
             content: payload.text,
             senderId: userId as string,
             conversationId: payload.roomId,
           },
+        });
+
+        // B. NAYA: Kamre ki ghari (clock) update karo taake list mein user top par aaye
+        await prisma.conversation.update({
+          where: { id: payload.roomId },
+          data: { lastMessageAt: savedMessage.createdAt }, // Naye message ka time yahan dal gaya
         });
 
         const broadcastPayload = {
@@ -63,7 +70,7 @@ export const handleChatEvents = (io: Server, socket: AuthenticatedSocket) => {
           createdAt: savedMessage.createdAt,
         };
 
-        // THE FIX: Message strictly Target User ke personal room mein bhejo, hawa mein nahi!
+        // C. Target user ko directly bhej do
         socket
           .to(payload.targetUserId)
           .emit("receiveMessage", broadcastPayload);
@@ -111,7 +118,7 @@ export const handleChatEvents = (io: Server, socket: AuthenticatedSocket) => {
     },
   );
 
-  // 3. Typing Indicators (Updated)
+  // 3. Typing Indicators
   socket.on("typing", (payload: { targetUserId: string }) => {
     socket.to(payload.targetUserId).emit("userTyping", userId);
   });

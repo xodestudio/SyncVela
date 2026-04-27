@@ -5,8 +5,14 @@ import { useAuthStore } from "@/src/store/authStore";
 
 export default function Sidebar() {
   const { socket, isConnected } = useSocket();
-  const { users, selectedUser, setSelectedUser, onlineUsers, unreadCounts } =
-    useChatStore();
+  const {
+    users,
+    selectedUser,
+    setSelectedUser,
+    onlineUsers,
+    unreadCounts,
+    resetChat,
+  } = useChatStore();
   const { user, logout } = useAuthStore();
 
   const handleUserSelect = (targetUser: SidebarUser) => {
@@ -18,6 +24,11 @@ export default function Sidebar() {
       // Dhyan rahe ke Room ID ka logic handle karna hoga, ya seedha targetUserId bhej do
       // Hum direct event fire karenge jab roomId mil jaye. Behtar hai isko hum chatStore action mein wrap karein.
     }
+  };
+
+  const handleStrictLogout = () => {
+    resetChat(); // Pehle chat ki memory wipe karo (Security First)
+    logout(); // Phir user ko auth se bahar phainko
   };
 
   return (
@@ -35,7 +46,7 @@ export default function Sidebar() {
           </div>
         </div>
         <button
-          onClick={logout}
+          onClick={handleStrictLogout}
           className="text-xs text-red-500 hover:underline"
         >
           Logout

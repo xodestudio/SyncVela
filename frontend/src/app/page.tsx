@@ -19,6 +19,7 @@ export default function ChatPage() {
     setMessages,
     setTypingStatus,
     setOnlineUsers,
+    setTargetLastReadAt,
   } = useChatStore();
   const { isAuthenticated, user } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -58,7 +59,6 @@ export default function ChatPage() {
     const handleRoomJoined = async (roomId: string) => {
       setActiveRoomId(roomId);
 
-      // NAYA: Jaise hi kamre mein ghuso, backend ko watermark update karne ka bol do
       const currentSelectedUser = useChatStore.getState().selectedUser;
       if (currentSelectedUser) {
         socket.emit("markAsRead", {
@@ -74,30 +74,68 @@ export default function ChatPage() {
         );
         if (response.ok) {
           const data = await response.json();
-          const formattedHistory: Message[] = data.map((msg: any) => ({
+
+          const formattedHistory: Message[] = data.messages.map((msg: any) => ({
             id: msg.id,
             text: msg.content,
             senderId: msg.senderId,
             createdAt: msg.createdAt,
           }));
           setMessages(formattedHistory);
+
+          if (currentSelectedUser) {
+            const targetParticipant = data.participants.find(
+              (p: any) => p.userId === currentSelectedUser.id,
+            );
+            setTargetLastReadAt(targetParticipant?.lastReadAt || null);
+          }
+
+          useChatStore.getState().setPagination(data.hasMore, data.nextCursor);
         }
       } catch (error) {
         console.error("❌ Failed to fetch room history", error);
       }
     };
 
-    const handleNewMessage = (message: Message) => {
-      // Zustand ka naya pattern (Bina stale state ke current state nikalna)
-      const currentSelectedUser = useChatStore.getState().selectedUser;
-
-      // Agar main pehle se usi user ke room mein hun, toh message chat mein add karo
-      if (currentSelectedUser?.id === message.senderId) {
-        addMessage(message);
+    const handleMessagesRead = ({ roomId }: { roomId: string }) => {
+      const activeRoom = useChatStore.getState().activeRoomId;
+      if (activeRoom === roomId) {
+        setTargetLastReadAt(new Date().toISOString());
       }
-      // Agar main kisi aur room mein hun (ya kisi bhi room mein nahi hun), toh us bande ka badge increment karo
-      else {
-        useChatStore.getState().incrementUnread(message.senderId);
+    };
+
+    const handleNewMessage = (message: Message) => {
+      // 1. React closures se bachne ke liye direct RAM (Store) se latest data nikalo
+      const chatState = useChatStore.getState();
+      const authState = useAuthStore.getState();
+
+      const currentSelectedUser = chatState.selectedUser;
+      const currentRoomId = chatState.activeRoomId;
+      const me = authState.user;
+
+      // 2. Kis user ko top par lana hai? (Sender ya Receiver)
+      const isMeSender = message.senderId === me?.id;
+      const targetUserId = isMeSender
+        ? currentSelectedUser?.id
+        : message.senderId;
+
+      if (targetUserId) {
+        console.log(`🚀 Triggering Jump for User ID: ${targetUserId}`);
+        chatState.moveUserToTop(targetUserId);
+      }
+
+      // 3. UI Badges & Read Receipts
+      if (currentSelectedUser?.id === message.senderId) {
+        chatState.addMessage(message);
+
+        if (currentRoomId) {
+          socket.emit("markAsRead", {
+            roomId: currentRoomId,
+            targetUserId: message.senderId,
+          });
+        }
+      } else {
+        chatState.incrementUnread(message.senderId);
       }
     };
 
@@ -105,6 +143,7 @@ export default function ChatPage() {
     const handleStopTyping = () => setTypingStatus(false);
 
     socket.on("roomJoined", handleRoomJoined);
+    socket.on("messagesRead", handleMessagesRead);
     socket.on("receiveMessage", handleNewMessage);
     socket.on("userTyping", handleTyping);
     socket.on("userStoppedTyping", handleStopTyping);
@@ -112,14 +151,31 @@ export default function ChatPage() {
       setOnlineUsers(userIds);
     });
 
+    const handleDisconnect = () => {
+      console.warn("⚠️ Server connection lost. Clearing online users.");
+      setOnlineUsers([]); // Fauran sabko offline (Gray) kar do
+    };
+
+    socket.on("disconnect", handleDisconnect);
+
     return () => {
       socket.off("roomJoined", handleRoomJoined);
+      socket.off("messagesRead", handleMessagesRead);
       socket.off("receiveMessage", handleNewMessage);
       socket.off("userTyping", handleTyping);
       socket.off("userStoppedTyping", handleStopTyping);
       socket.off("getOnlineUsers");
+      socket.off("disconnect", handleDisconnect);
     };
-  }, [socket, setActiveRoomId, addMessage, setMessages, setTypingStatus]);
+  }, [
+    socket,
+    setActiveRoomId,
+    addMessage,
+    setMessages,
+    setTypingStatus,
+    setOnlineUsers,
+    setTargetLastReadAt,
+  ]);
 
   if (!mounted) return null;
   if (!isAuthenticated) return <Auth />;
