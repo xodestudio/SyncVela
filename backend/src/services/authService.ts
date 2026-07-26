@@ -28,7 +28,7 @@ export type SafeUser = Omit<
   | "createdAt"
   | "updatedAt"
   | "googleId"
->;
+> & { hasPassword: boolean };
 
 export interface AuthResponse {
   user: SafeUser;
@@ -51,7 +51,8 @@ const sanitizeUser = (user: User): SafeUser => {
     googleId,
     ...safeUser
   } = user;
-  return safeUser;
+  // 🚀 ACCOUNT LINKING: frontend ko batao password set hai ya nahi (bina hash expose kiye)
+  return { ...safeUser, hasPassword: !!password };
 };
 
 export const generateAndStoreTokens = async (
@@ -167,7 +168,17 @@ export const login = async (
   password: string,
 ): Promise<AuthResponse> => {
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !(await bcrypt.compare(password, user.password!))) {
+  if (!user) {
+    throw new Error("Invalid credentials");
+  }
+
+  // 🚀 ACCOUNT LINKING: Google-only account (no password set yet).
+  // Bcrypt compare pe `user.password!` crash karta — guard pehle.
+  if (!user.password) {
+    throw new Error("GOOGLE_ACCOUNT");
+  }
+
+  if (!(await bcrypt.compare(password, user.password))) {
     throw new Error("Invalid credentials");
   }
 
@@ -304,5 +315,53 @@ export const executePasswordReset = async (
 
   return {
     message: "Password has been successfully reset. You can now login.",
+  };
+};
+
+// 🚀 ACCOUNT LINKING: Google user apna password set kare taake email+password login bhi kaam kare.
+// Authenticated route hai — userId JWT se aata hai, OTP email pe bheja jata hai for verification.
+export const requestSetPassword = async (userId: string) => {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error("User not found.");
+  if (user.password)
+    throw new Error(
+      "Password is already set. Use forgot-password to change it.",
+    );
+
+  const otp = crypto.randomInt(100000, 999999).toString();
+  const resetTokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { resetToken: otp, resetTokenExpiresAt },
+  });
+  sendOtpEmail(user.email, otp).catch((e) =>
+    console.error("❌ Set-password OTP email failed:", e),
+  );
+  return { message: "A verification code has been sent to your email." };
+};
+
+export const confirmSetPassword = async (
+  userId: string,
+  otp: string,
+  newPassword: string,
+) => {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error("User not found.");
+  if (user.resetToken !== otp) throw new Error("Invalid OTP.");
+  if (!user.resetTokenExpiresAt || new Date() > user.resetTokenExpiresAt)
+    throw new Error("OTP has expired. Please request a new one.");
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: hashedPassword,
+      resetToken: null,
+      resetTokenExpiresAt: null,
+    },
+  });
+  return {
+    message:
+      "Password set successfully. You can now log in with email and password.",
   };
 };
