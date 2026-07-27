@@ -14,7 +14,6 @@ export const useChannelEvents = (socket: any) => {
       const currentUser = authState().user;
 
       // 🚀 THE BULLETPROOF PAYLOAD EXTRACTOR
-      // Backend agar property ka naam badal kar bhi bheje toh frontend catch kar lega
       const targetChannelId = rawMessage.channelId || rawMessage.roomId;
 
       if (!targetChannelId) return;
@@ -115,13 +114,13 @@ export const useChannelEvents = (socket: any) => {
         socket.emit("markChannelAsRead", { channelId: targetChannelId });
       } else {
         // 🚀 THE IDENTITY SHIELD & UNLOCKER
-        // Ab har thread reply ya normal message par badge barhega, BASHARTE wo message kisi aur ne bheja ho!
         if (rawMessage.senderId !== currentUser?.id) {
           chatState().incrementChannelUnread(targetChannelId);
         }
       }
     };
 
+    // 🚀 EXPLICIT INVITE HANDLER (This fires when Owner uses "Add Members")
     const handleAddedToChannel = (channel: any) => {
       const state = chatState();
       const currentChannels = state.channels;
@@ -132,8 +131,15 @@ export const useChannelEvents = (socket: any) => {
       }
     };
 
+    // 🚀 GENERAL BROADCAST HANDLER
     const handleChannelCreated = (channel: any) => {
       const state = chatState();
+
+      // 🚨 THE GUEST ISOLATION FIX FOR REAL-TIME
+      // Agar current user GUEST hai, toh is general broadcast ko strictly ignore karo
+      if (state.currentUserRole === "GUEST") {
+        return;
+      }
 
       if (state.activeWorkspaceId === channel.workspaceId) {
         const currentChannels = state.channels;
