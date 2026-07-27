@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import prisma from "../config/db";
-import { authorizeRBAC } from "../utils/rbac";
 
 export interface AuthenticatedRequest extends Request {
   user?: { userId: string };
@@ -19,13 +18,6 @@ export const createChannel = async (
       res
         .status(400)
         .json({ error: "Channel name and Workspace ID are required." });
-      return;
-    }
-
-    // 🚀 THE ENTERPRISE GATEKEEPER
-    const auth = await authorizeRBAC(userId, workspaceId, "CREATE_CHANNEL");
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
       return;
     }
 
@@ -81,18 +73,33 @@ export const getWorkspaceChannels = async (
     const workspaceId = req.params.workspaceId as string;
     const userId = req.user!.userId;
 
-    // 🚀 THE ENTERPRISE GATEKEEPER
-    const auth = await authorizeRBAC(userId, workspaceId, "VIEW_WORKSPACE");
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
+    const memberRecord = await prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+      select: { role: true, createdAt: true },
+    });
+
+    if (!memberRecord) {
+      res
+        .status(403)
+        .json({ error: "Access denied. Not a member of this workspace." });
       return;
     }
 
+    // 🚀 THE GUEST ISOLATION ENGINE
+    let channelQuery: any = { workspaceId };
+
+    if (memberRecord.role === "GUEST") {
+      // Guests only see channels they are explicitly invited to (even PUBLIC ones)
+      channelQuery.members = {
+        some: { userId },
+      };
+    } else {
+      // Core members see all PUBLIC channels + PRIVATE channels they are part of
+      channelQuery.OR = [{ type: "PUBLIC" }, { members: { some: { userId } } }];
+    }
+
     const channels = await prisma.channel.findMany({
-      where: {
-        workspaceId,
-        OR: [{ type: "PUBLIC" }, { members: { some: { userId } } }],
-      },
+      where: channelQuery,
       orderBy: { createdAt: "asc" },
     });
 
@@ -100,11 +107,7 @@ export const getWorkspaceChannels = async (
       where: { userId, channelId: { in: channels.map((c) => c.id) } },
     });
 
-    // Extracting member record for fallback date calculation safely
-    const memberRecord = await prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-    });
-    const fallbackBaselineDate = memberRecord?.createdAt || new Date();
+    const fallbackBaselineDate = memberRecord.createdAt || new Date();
 
     const hydratedChannels = await Promise.all(
       channels.map(async (channel) => {
@@ -179,17 +182,6 @@ export const inviteToChannel = async (
       return;
     }
 
-    // 🚀 THE ENTERPRISE GATEKEEPER
-    const auth = await authorizeRBAC(
-      inviterId,
-      channel.workspaceId,
-      "INVITE_USERS",
-    );
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
-      return;
-    }
-
     const isInviterInChannel = await prisma.channelMember.findUnique({
       where: { userId_channelId: { userId: inviterId, channelId } },
     });
@@ -223,6 +215,16 @@ export const inviteToChannel = async (
       })),
       skipDuplicates: true,
     });
+
+    // 🚀 THE REAL-TIME INVITATION ENGINE
+    const io = req.app.get("socketio");
+    if (io) {
+      // Har newly invited user ko specific event bhejo
+      validUserIds.forEach((id) => {
+        // user ki specific socket room mein emit kar rahe hain
+        io.to(id).emit("added_to_channel", channel);
+      });
+    }
 
     res.status(200).json({ success: true, addedUsers: validUserIds.length });
   } catch (error) {
@@ -261,14 +263,12 @@ export const getChannelMembers = async (
       }
     }
 
-    // PUBLIC channels belong to the whole workspace, so their member list is
-    // every workspace member — not just the ChannelMember read-state rows (only
-    // the creator gets one of those at creation). This also makes newly-joined
-    // workspace members appear automatically on the next fetch. PRIVATE channels
-    // stay restricted to their explicit ChannelMember rows.
+    // 🚀 THE SMART VISIBILITY FIX FOR PUBLIC CHANNELS
+    // PUBLIC channels belong to core members automatically. GUESTs are isolated unless explicitly added.
     if (channel.type === "PUBLIC") {
-      const workspaceMembers = await prisma.workspaceMember.findMany({
-        where: { workspaceId: channel.workspaceId },
+      // 1. Fetch core members (Everyone except GUESTs)
+      const coreMembers = await prisma.workspaceMember.findMany({
+        where: { workspaceId: channel.workspaceId, role: { not: "GUEST" } },
         include: {
           user: {
             select: { id: true, name: true, avatarUrl: true, email: true },
@@ -276,15 +276,45 @@ export const getChannelMembers = async (
         },
       });
 
-      const formattedMembers = workspaceMembers.map((wm) => ({
+      // 2. Fetch explicit channel members (Captures invited GUESTs)
+      const explicitMembers = await prisma.channelMember.findMany({
+        where: { channelId },
+        include: {
+          user: {
+            select: { id: true, name: true, avatarUrl: true, email: true },
+          },
+        },
+      });
+
+      const explicitUserIds = explicitMembers.map((m) => m.userId);
+      const explicitRoles = await prisma.workspaceMember.findMany({
+        where: {
+          workspaceId: channel.workspaceId,
+          userId: { in: explicitUserIds },
+        },
+        select: { userId: true, role: true },
+      });
+
+      const formattedCore = coreMembers.map((wm) => ({
         ...wm.user,
         role: wm.role,
       }));
 
-      res.status(200).json(formattedMembers);
+      const coreUserIds = new Set(formattedCore.map((m) => m.id));
+
+      const formattedExplicit = explicitMembers
+        .filter((m) => !coreUserIds.has(m.userId)) // Prevent duplicates
+        .map((m) => {
+          const role =
+            explicitRoles.find((r) => r.userId === m.userId)?.role || "GUEST";
+          return { ...m.user, role };
+        });
+
+      res.status(200).json([...formattedCore, ...formattedExplicit]);
       return;
     }
 
+    // 🛡️ Logic for PRIVATE channels (Only explicit members)
     const channelMembers = await prisma.channelMember.findMany({
       where: { channelId },
       include: {
