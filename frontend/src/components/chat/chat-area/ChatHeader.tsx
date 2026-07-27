@@ -94,8 +94,9 @@ export default function ChatHeader({
             <Users className="h-4 w-4" />
           </Button>
 
-          {/* 🛡️ ADD MEMBERS BUTTON (Strictly controlled by RBAC) */}
-          {activeChannel.type === "PRIVATE" && canInvite && (
+          {/* 🛡️ ADD MEMBERS BUTTON (Strictly controlled by RBAC only) */}
+          {/* 🚀 THE FIX: Removed the "PRIVATE" only restriction */}
+          {canInvite && (
             <Button
               variant="outline"
               size="sm"

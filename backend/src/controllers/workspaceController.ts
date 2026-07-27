@@ -1,7 +1,6 @@
 import { Response } from "express";
 import prisma from "../config/db";
 import { AuthenticatedRequest } from "./channelController";
-import { authorizeRBAC } from "../utils/rbac";
 
 // 1. CREATE WORKSPACE
 export const createWorkspace = async (
@@ -102,7 +101,6 @@ export const joinWorkspace = async (
 
     const isAlreadyMember = workspace.members.some((m) => m.userId === userId);
     if (isAlreadyMember) {
-      // 🚀 THE FIX: Sending workspaceId back even on error
       res.status(400).json({
         error: "You are already in this workspace.",
         workspaceId: workspace.id,
@@ -130,8 +128,6 @@ export const joinWorkspace = async (
         workspaceId: workspace.id,
         user: newMemberRecord.user,
       });
-    } else {
-      console.error("⚠️ WebSocket instance not found in Express App State!");
     }
 
     res
@@ -150,14 +146,6 @@ export const getWorkspaceMembers = async (
 ): Promise<void> => {
   try {
     const workspaceId = req.params.workspaceId as string;
-    const userId = req.user!.userId;
-
-    // 🚀 THE ENTERPRISE GATEKEEPER
-    const auth = await authorizeRBAC(userId, workspaceId, "VIEW_WORKSPACE");
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
-      return;
-    }
 
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -207,14 +195,6 @@ export const deleteWorkspace = async (
 ): Promise<void> => {
   try {
     const workspaceId = req.params.workspaceId as string;
-    const userId = req.user!.userId;
-
-    // 🚀 THE ENTERPRISE GATEKEEPER
-    const auth = await authorizeRBAC(userId, workspaceId, "DELETE_WORKSPACE");
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
-      return;
-    }
 
     await prisma.$transaction(async (tx) => {
       const channels = await tx.channel.findMany({ where: { workspaceId } });
@@ -234,6 +214,11 @@ export const deleteWorkspace = async (
       await tx.workspace.delete({ where: { id: workspaceId } });
     });
 
+    const io = req.app.get("socketio");
+    if (io) {
+      io.to(workspaceId).emit("workspace_deleted", workspaceId);
+    }
+
     res
       .status(200)
       .json({ success: true, message: "Workspace completely deleted." });
@@ -243,13 +228,12 @@ export const deleteWorkspace = async (
   }
 };
 
-// 6. UPDATE WORKSPACE MEMBER ROLE (RBAC Enforced)
+// 6. UPDATE WORKSPACE MEMBER ROLE
 export const updateWorkspaceMemberRole = async (
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> => {
   try {
-    // 🚀 THE FIX: Cast explicitly to string to stop type union leakage
     const workspaceId = req.body.workspaceId as string;
     const targetUserId = req.body.targetUserId as string;
     const newRole = req.body.newRole as string;
@@ -269,13 +253,9 @@ export const updateWorkspaceMemberRole = async (
       return;
     }
 
-    const auth = await authorizeRBAC(
-      currentUserId,
-      workspaceId,
-      "MANAGE_WORKSPACE",
-    );
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
+    // EDGE CASE: Stop user from modifying their own role
+    if (currentUserId === targetUserId) {
+      res.status(400).json({ error: "You cannot change your own role." });
       return;
     }
 
@@ -283,7 +263,14 @@ export const updateWorkspaceMemberRole = async (
       where: { userId_workspaceId: { userId: targetUserId, workspaceId } },
     });
 
-    if (targetMember?.role === "OWNER") {
+    if (!targetMember) {
+      res
+        .status(404)
+        .json({ error: "User is not a member of this workspace." });
+      return;
+    }
+
+    if (targetMember.role === "OWNER") {
       res.status(400).json({
         error: "System Lock: Workspace Owner's role cannot be modified.",
       });
@@ -296,32 +283,50 @@ export const updateWorkspaceMemberRole = async (
       include: { user: { select: { id: true, name: true } } },
     });
 
-    // When demoted to MEMBER/GUEST, revoke access to all private channels in
-    // this workspace — they should only be in channels they were explicitly
-    // invited to as a regular member, not ones they created/joined as ADMIN.
+    // 🚀 THE QUARANTINE ENGINE FIX
     let revokedChannelIds: string[] = [];
-    if (newRole === "MEMBER" || newRole === "GUEST") {
+
+    if (newRole === "GUEST") {
+      // 🚨 DEMOTED TO GUEST: Strip access from ALL channels (Public & Private).
+      // This enforces strict quarantine. The Admin must re-invite them manually.
+      const allChannels = await prisma.channel.findMany({
+        where: { workspaceId },
+        select: { id: true },
+      });
+      revokedChannelIds = allChannels.map((c) => c.id);
+    } else if (newRole === "MEMBER") {
+      // 🚨 DEMOTED TO MEMBER: Only strip access from PRIVATE channels.
+      // Members inherently have access to all PUBLIC channels.
       const privateChannels = await prisma.channel.findMany({
         where: { workspaceId, type: "PRIVATE" },
         select: { id: true },
       });
       revokedChannelIds = privateChannels.map((c) => c.id);
-      if (revokedChannelIds.length > 0) {
-        await prisma.channelMember.deleteMany({
-          where: { userId: targetUserId, channelId: { in: revokedChannelIds } },
-        });
-      }
+    }
+
+    if (revokedChannelIds.length > 0) {
+      await prisma.channelMember.deleteMany({
+        where: { userId: targetUserId, channelId: { in: revokedChannelIds } },
+      });
     }
 
     const io = req.app.get("socketio");
     if (io) {
+      // Broadcast the role change to the workspace
       io.to(workspaceId).emit("member_role_updated", {
         workspaceId,
         userId: targetUserId,
         newRole,
       });
+
+      // Force the demoted user's UI to wipe the revoked channels instantly
       if (revokedChannelIds.length > 0) {
-        io.to(targetUserId).emit("private_channels_revoked", { channelIds: revokedChannelIds });
+        // Hum purana frontend event name "private_channels_revoked" hi use kar rahe hain
+        // kyunke frontend filter logic explicitly private/public check nahi karti,
+        // bas ID match kar ke channel sidebar se uda deti hai.
+        io.to(targetUserId).emit("private_channels_revoked", {
+          channelIds: revokedChannelIds,
+        });
       }
     }
 
@@ -335,7 +340,7 @@ export const updateWorkspaceMemberRole = async (
   }
 };
 
-// 7. KICK MEMBER FROM WORKSPACE (RBAC Enforced)
+// 7. KICK MEMBER FROM WORKSPACE
 export const removeWorkspaceMember = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -345,13 +350,10 @@ export const removeWorkspaceMember = async (
     const targetUserId = req.params.userId as string;
     const currentUserId = req.user!.userId;
 
-    const auth = await authorizeRBAC(
-      currentUserId,
-      workspaceId,
-      "MANAGE_WORKSPACE",
-    );
-    if (!auth.allowed) {
-      res.status(403).json({ error: auth.reason });
+    if (currentUserId === targetUserId) {
+      res
+        .status(400)
+        .json({ error: "You cannot kick yourself from the workspace." });
       return;
     }
 

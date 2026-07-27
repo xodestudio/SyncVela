@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useChatStore } from "@/src/store/chat";
 import { useAuthStore } from "@/src/store/authStore";
-import { useSocket } from "@/src/providers/SocketProvider"; // 🟢 ADDED SOCKET
+import { useSocket } from "@/src/providers/SocketProvider";
 import { X, UserPlus, Loader2, Check } from "lucide-react";
 import { authFetch } from "@/src/lib/authFetch";
 
@@ -16,13 +16,43 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const { users, activeChannelId, channels } = useChatStore();
-  const { token } = useAuthStore();
-  const { socket } = useSocket(); // 🟢 ADDED SOCKET
+  const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([]);
+  const [isFetchingMembers, setIsFetchingMembers] = useState(false);
 
-  if (!isOpen || !activeChannelId) return null;
+  const { activeChannelId, channels, activeWorkspaceId } = useChatStore();
+
+  // 🚀 THE FIX: Get the current logged-in 'user' from authStore
+  const { token, user } = useAuthStore();
+  const { socket } = useSocket();
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
+
+  useEffect(() => {
+    if (!isOpen || !activeWorkspaceId) {
+      setSelectedIds([]);
+      return;
+    }
+
+    const fetchValidMembers = async () => {
+      setIsFetchingMembers(true);
+      try {
+        const response = await authFetch(
+          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/workspaces/${activeWorkspaceId}/members`,
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          setWorkspaceMembers(data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch verified workspace members", error);
+      } finally {
+        setIsFetchingMembers(false);
+      }
+    };
+
+    fetchValidMembers();
+  }, [isOpen, activeWorkspaceId]);
 
   const toggleUser = (id: string) => {
     setSelectedIds((prev) =>
@@ -49,11 +79,6 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
       const data = await response.json();
 
       if (response.ok) {
-        alert(
-          `✅ Successfully added ${data.addedUsers} members to ${activeChannel?.name}!`,
-        );
-
-        // 🟢 THE REAL-TIME FIX: Notify via Socket
         if (socket && activeChannel) {
           socket.emit("notify_channel_invites", {
             channel: activeChannel,
@@ -73,6 +98,11 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
       setIsLoading(false);
     }
   };
+
+  if (!isOpen || !activeChannelId) return null;
+
+  // 🚀 THE ISOLATION FIX: Filter out the current user so they don't see themselves
+  const invitableMembers = workspaceMembers.filter((m) => m.id !== user?.id);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -98,13 +128,18 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
           </button>
         </div>
 
-        <div className="max-h-[300px] overflow-y-auto pr-2 flex flex-col gap-2 mb-6">
-          {users.length === 0 ? (
+        <div className="max-h-[300px] overflow-y-auto pr-2 flex flex-col gap-2 mb-6 custom-scrollbar">
+          {isFetchingMembers ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : invitableMembers.length === 0 ? (
             <p className="text-sm text-center text-muted-foreground py-4">
               No other members in this workspace to invite.
             </p>
           ) : (
-            users.map((u) => {
+            // 🚀 Iterate over the filtered list instead of the raw workspaceMembers
+            invitableMembers.map((u) => {
               const isSelected = selectedIds.includes(u.id);
               return (
                 <div
@@ -117,16 +152,26 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center font-bold text-xs text-foreground">
-                      {u.name.substring(0, 2).toUpperCase()}
+                    <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center font-bold text-xs text-foreground overflow-hidden border border-border shrink-0">
+                      {u.avatarUrl ? (
+                        <img
+                          src={u.avatarUrl}
+                          alt={u.name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        u.name.substring(0, 2).toUpperCase()
+                      )}
                     </div>
                     <span
-                      className={`text-sm ${isSelected ? "font-semibold" : "font-medium"}`}
+                      className={`text-sm truncate ${isSelected ? "font-semibold text-primary" : "font-medium text-foreground"}`}
                     >
                       {u.name}
                     </span>
                   </div>
-                  {isSelected && <Check className="h-4 w-4 text-primary" />}
+                  {isSelected && (
+                    <Check className="h-4 w-4 text-primary shrink-0" />
+                  )}
                 </div>
               );
             })
@@ -135,7 +180,7 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
 
         <button
           onClick={handleInvite}
-          disabled={selectedIds.length === 0 || isLoading}
+          disabled={selectedIds.length === 0 || isLoading || isFetchingMembers}
           className="w-full flex items-center justify-center py-2.5 bg-primary text-primary-foreground font-semibold rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
@@ -148,4 +193,3 @@ export default function InviteModal({ isOpen, onClose }: InviteModalProps) {
     </div>
   );
 }
-
