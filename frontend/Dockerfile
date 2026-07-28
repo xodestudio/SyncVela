@@ -9,9 +9,12 @@ RUN npm install --legacy-peer-deps
 
 COPY . .
 
-# 🔴 THE FIX: Build-time args for Next.js variables
+# 🔴 THE FIX: Catch ALL necessary Next.js variables before building
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 
 RUN npm run build
 
