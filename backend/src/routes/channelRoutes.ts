@@ -7,12 +7,13 @@ import {
   getChannelMembers,
 } from "../controllers/channelController";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { requirePermission } from "../middlewares/rbacMiddleware";
 
 const router = Router();
 
 router.use(authMiddleware);
 
-router.post("/", createChannel);
+router.post("/", requirePermission("CREATE_CHANNEL"), createChannel);
 router.get("/:workspaceId", getWorkspaceChannels);
 router.post("/mark-read", markChannelAsRead);
 router.post("/:channelId/invite", inviteToChannel);

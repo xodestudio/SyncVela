@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useChatStore } from "@/src/store/chat";
 import { useAuthStore } from "@/src/store/authStore";
-import { usePermissions } from "@/src/hooks/usePermissions"; // 🚀 RBAC IMPORT
+import { usePermissions } from "@/src/hooks/usePermissions";
 import {
   MessageSquare,
   ChevronDown,
@@ -14,7 +14,7 @@ import {
   Settings,
 } from "lucide-react";
 import WorkspaceInviteModal from "./WorkspaceInviteModal";
-import ManageMembersModal from "./ManageMembersModal"; // 🚀 NEW MODAL IMPORT
+import ManageMembersModal from "./ManageMembersModal";
 import { authFetch } from "@/src/lib/authFetch";
 
 interface WorkspaceDropdownProps {
@@ -26,7 +26,7 @@ export default function WorkspaceDropdown({
 }: WorkspaceDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [isManageModalOpen, setIsManageModalOpen] = useState(false); // 🚀 NEW STATE
+  const [isManageModalOpen, setIsManageModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const { token } = useAuthStore();
@@ -38,9 +38,9 @@ export default function WorkspaceDropdown({
     setSelectedUser,
     setWorkspaces,
   } = useChatStore();
+  
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
 
-  // 🛡️ THE CLEAN RBAC ENGINE
   const { hasPermission } = usePermissions();
   const canInvite = hasPermission("INVITE_USERS");
   const canDelete = hasPermission("DELETE_WORKSPACE");
@@ -67,6 +67,12 @@ export default function WorkspaceDropdown({
           (w) => w.id !== activeWorkspaceId,
         );
         setWorkspaces(updatedWorkspaces);
+        
+        // 🚀 THE MEMORY WIPE FIX
+        useChatStore.getState().setChannels([]);
+        useChatStore.getState().setUsers([]);
+        useChatStore.getState().setMessages([]);
+
         setActiveChannelId(null);
         setSelectedUser(null);
         setIsOpen(false);
@@ -78,8 +84,10 @@ export default function WorkspaceDropdown({
             updatedWorkspaces[0].id,
           );
         } else {
+          // 🚀 NO WORKSPACES LEFT FIX
           setActiveWorkspaceId(null);
           localStorage.removeItem("lastActiveWorkspaceId");
+          onOpenCreateModal();
         }
       } else {
         const data = await response.json();
@@ -150,7 +158,6 @@ export default function WorkspaceDropdown({
 
               <div className="border-t border-border mt-1 mb-1"></div>
 
-              {/* 🛡️ UI GATEKEEPER via Hooks */}
               {canInvite && (
                 <div
                   onClick={() => {
@@ -163,7 +170,6 @@ export default function WorkspaceDropdown({
                 </div>
               )}
 
-              {/* 🚀 THE MANAGEMENT DASHBOARD TRIGGER */}
               {canManageWorkspace && (
                 <div
                   onClick={() => {
@@ -213,7 +219,6 @@ export default function WorkspaceDropdown({
         />
       )}
 
-      {/* 🚀 THE MANAGEMENT MODAL */}
       <ManageMembersModal
         isOpen={isManageModalOpen}
         onClose={() => setIsManageModalOpen(false)}
@@ -221,4 +226,3 @@ export default function WorkspaceDropdown({
     </>
   );
 }
-

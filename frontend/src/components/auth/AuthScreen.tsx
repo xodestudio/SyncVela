@@ -260,4 +260,3 @@ export function AuthScreen({
     </div>
   );
 }
-
