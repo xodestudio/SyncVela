@@ -7,6 +7,8 @@ export interface User {
   name: string;
   email: string;
   avatarUrl?: string | null;
+  provider?: "LOCAL" | "GOOGLE";
+  hasPassword?: boolean;
 }
 
 interface AuthState {

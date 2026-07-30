@@ -9,7 +9,7 @@ RUN npm install --legacy-peer-deps
 
 COPY . .
 
-# 🔴 THE FIX: Catch BOTH Build-time args for Next.js variables
+# 🔴 THE FIX: Build-time args for Next.js variables
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 

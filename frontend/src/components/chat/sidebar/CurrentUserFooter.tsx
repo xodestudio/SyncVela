@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/src/components/ui/dialog";
 import AvatarUploader from "../../profile/AvatarUploader";
+import SetPasswordCard from "../../profile/SetPasswordCard";
 
 export default function CurrentUserFooter() {
   const { user, logout } = useAuthStore();
@@ -102,8 +103,9 @@ export default function CurrentUserFooter() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="py-6 flex flex-col items-center justify-center">
+          <div className="py-6 flex flex-col items-center justify-center gap-5">
             <AvatarUploader />
+            <SetPasswordCard />
           </div>
         </DialogContent>
       </Dialog>

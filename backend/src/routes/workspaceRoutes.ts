@@ -9,6 +9,7 @@ import {
   removeWorkspaceMember,
 } from "../controllers/workspaceController";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { requirePermission } from "../middlewares/rbacMiddleware";
 
 const router = Router();
 
@@ -19,8 +20,20 @@ router.post("/", createWorkspace);
 router.get("/", getUserWorkspaces);
 router.post("/join/:inviteCode", joinWorkspace);
 router.get("/:workspaceId/members", getWorkspaceMembers);
-router.delete("/:workspaceId", deleteWorkspace);
-router.put("/members/role", updateWorkspaceMemberRole);
-router.delete("/:workspaceId/members/:userId", removeWorkspaceMember);
+router.delete(
+  "/:workspaceId",
+  requirePermission("DELETE_WORKSPACE"),
+  deleteWorkspace,
+);
+router.put(
+  "/members/role",
+  requirePermission("MANAGE_WORKSPACE"),
+  updateWorkspaceMemberRole,
+);
+router.delete(
+  "/:workspaceId/members/:userId",
+  requirePermission("MANAGE_WORKSPACE"),
+  removeWorkspaceMember,
+);
 
 export default router;

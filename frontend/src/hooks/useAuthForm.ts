@@ -7,7 +7,7 @@ export const useAuthForm = (initialMode: boolean = true) => {
   const { login } = useAuthStore();
   const router = useRouter();
 
-  const [isLoginMode, setIsLoginMode] = useState(initialMode);
+  const [isLoginMode] = useState(initialMode);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -23,6 +23,8 @@ export const useAuthForm = (initialMode: boolean = true) => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    // 🚀 UX FIX: Error fauran clear karo jab user dobara type karna shuru kare
+    setError("");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,30 +51,42 @@ export const useAuthForm = (initialMode: boolean = true) => {
 
       const data = response.data;
 
+      // 🔴 Error Handling Pipeline
       if (response.status < 200 || response.status >= 300) {
+        // 🚀 ROUTING FIX: Correct path is /auth/verify-otp
         if (data.error === "EMAIL_NOT_VERIFIED") {
           router.push(
-            `/verify-otp?email=${encodeURIComponent(formData.email)}`,
+            `/auth/verify-otp?email=${encodeURIComponent(formData.email)}`,
           );
           return;
         }
+
+        // 🚀 THE GOOGLE ACCOUNT INTERCEPTOR
+        if (data.error === "GOOGLE_ACCOUNT") {
+          throw new Error(
+            "This account uses Google Sign-In. Please log in with Google first. You can then set a password in your profile settings to enable email/password login.",
+          );
+        }
+
         throw new Error(
           data.error || "Authentication failed. Please check your credentials.",
         );
       }
 
+      // 🟢 Success Pipeline
       if (isLoginMode) {
-        login(data.user, data.accessToken || data.token);
+        // 🚀 ARCHITECTURE FIX: Sirf Zustand store update karo.
+        // AuthScreen.tsx ka useEffect automatically detect karega aur router.push() se seamless redirect marega. No window.location.href reloads.
 
-        const pendingInvite = localStorage.getItem("pendingInvite");
-        if (pendingInvite) {
-          localStorage.removeItem("pendingInvite");
-          window.location.href = pendingInvite;
-        } else {
-          window.location.href = "/";
-        }
+        // Ensure hum token nikal rahe hain chahe backend payload kisi bhi shape mein aaye (e.g. data.tokens.accessToken ya data.token)
+        const tokenToStore =
+          data.tokens?.accessToken || data.accessToken || data.token;
+        login(data.user, tokenToStore);
       } else {
-        router.push(`/verify-otp?email=${encodeURIComponent(formData.email)}`);
+        // 🚀 ROUTING FIX: Push exactly to /auth/verify-otp
+        router.push(
+          `/auth/verify-otp?email=${encodeURIComponent(formData.email)}`,
+        );
       }
     } catch (err: any) {
       setError(err.message);

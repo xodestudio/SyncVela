@@ -93,6 +93,12 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // 🚀 ACCOUNT LINKING: Google-only account tried email+password login.
+    if (errorMessage === "GOOGLE_ACCOUNT") {
+      res.status(403).json({ error: errorMessage, email: fallbackEmail });
+      return;
+    }
+
     res.status(401).json({ error: errorMessage });
   }
 };
@@ -204,6 +210,44 @@ export const resetPasswordHandler = async (
     const { email, otp, newPassword } = req.body;
     const response = await authService.executePasswordReset(
       email,
+      otp,
+      newPassword,
+    );
+    res.status(200).json(response);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// 🚀 ACCOUNT LINKING: authenticated Google user requests an OTP to set a password.
+export const requestSetPasswordHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const response = await authService.requestSetPassword(userId);
+    res.status(200).json(response);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+export const confirmSetPasswordHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { otp, newPassword } = req.body;
+    if (!otp || !newPassword || newPassword.length < 6) {
+      res
+        .status(400)
+        .json({ error: "OTP and a password (min 6 chars) are required." });
+      return;
+    }
+    const response = await authService.confirmSetPassword(
+      userId,
       otp,
       newPassword,
     );

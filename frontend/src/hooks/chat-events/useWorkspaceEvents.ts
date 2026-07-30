@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useChatStore } from "@/src/store/chat";
-import { useAuthStore } from "@/src/store/authStore"; // 🚀 REQUIRED FOR THE FIX
+import { useAuthStore } from "@/src/store/authStore";
+import { authFetch } from "@/src/lib/authFetch";
 
 export const useWorkspaceEvents = (socket: any) => {
   useEffect(() => {
@@ -19,25 +20,41 @@ export const useWorkspaceEvents = (socket: any) => {
       }
     };
 
-    // 🚀 THE REAL-TIME PERMISSION REWRITE ENGINE
-    const handleRoleUpdated = (data: {
+    const handleRoleUpdated = async (data: {
       workspaceId: string;
       userId: string;
       newRole: string;
     }) => {
       const state = chatState();
-      const { user } = useAuthStore.getState(); // Strictly get the active user's ID without React Lifecycle issues
+      const { user } = useAuthStore.getState();
 
       if (state.activeWorkspaceId === data.workspaceId) {
-        // 🛡️ CRITICAL SYNC: Agar mera apna role change hua hai, toh meri apni aukaat (store permission) update karo
         if (user && user.id === data.userId) {
+          const previousRole = state.currentUserRole;
+
           console.log(
-            `⚡ Security Cleared: My role in this workspace dynamically updated to: ${data.newRole}`,
+            `⚡ Security Cleared: My role updated from ${previousRole} to: ${data.newRole}`,
           );
           state.setCurrentUserRole(data.newRole);
+
+          if (previousRole === "GUEST" && data.newRole !== "GUEST") {
+            try {
+              const res = await authFetch(
+                `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/channels/${data.workspaceId}`,
+              );
+              if (res.ok) {
+                const freshChannels = await res.json();
+                chatState().setChannels(freshChannels);
+              }
+            } catch (err) {
+              console.error(
+                "❌ Failed to hydrate channels after promotion",
+                err,
+              );
+            }
+          }
         }
 
-        // Sidebar list mein users array ka role sync karo taake UI theek rahay
         state.setUsers(
           state.users.map((u) =>
             u.id === data.userId ? { ...u, role: data.newRole } : u,
@@ -46,7 +63,6 @@ export const useWorkspaceEvents = (socket: any) => {
       }
     };
 
-    // 🚀 THE PURGE RADAR (Sidebar Update)
     const handleMemberKicked = (data: {
       workspaceId: string;
       userId: string;
@@ -54,17 +70,14 @@ export const useWorkspaceEvents = (socket: any) => {
       const state = chatState();
 
       if (state.activeWorkspaceId === data.workspaceId) {
-        // Remove the kicked member from the local sidebar state instantly
         state.setUsers(state.users.filter((u) => u.id !== data.userId));
 
-        // Agar active chat wahi user tha jo kick hua, toh screen blank karo
         if (state.selectedUser?.id === data.userId) {
           state.setSelectedUser(null);
         }
       }
     };
 
-    // 🚀 THE REVOCATION ENGINE (If I am the one who got kicked!)
     const handleWorkspaceRevoked = (workspaceId: string) => {
       const state = chatState();
 
@@ -73,27 +86,56 @@ export const useWorkspaceEvents = (socket: any) => {
           "🚨 Security Alert: Your access to this workspace has been revoked by the administrator.",
         );
 
-        // 1. 🛡️ ZUSTAND MEMORY WIPE (Kill the persist middleware's source of truth)
         state.setActiveWorkspaceId(null);
         state.setActiveChannelId(null);
         state.setSelectedUser(null);
-
-        // 2. 🛡️ BROWSER STORAGE WIPE
         localStorage.removeItem("lastActiveWorkspaceId");
-
-        // 3. 🛡️ HARD REDIRECT TO DASHBOARD (System will now see null states and hydrate cleanly)
         window.location.href = "/";
       }
     };
 
-    // 🚀 PRIVATE CHANNEL REVOCATION: When demoted to MEMBER/GUEST, remove
-    // private channels the user no longer has access to from the sidebar.
-    const handlePrivateChannelsRevoked = ({ channelIds }: { channelIds: string[] }) => {
+    const handlePrivateChannelsRevoked = ({
+      channelIds,
+    }: {
+      channelIds: string[];
+    }) => {
       const state = chatState();
       const revokedSet = new Set(channelIds);
+
       state.setChannels(state.channels.filter((c) => !revokedSet.has(c.id)));
+
       if (state.activeChannelId && revokedSet.has(state.activeChannelId)) {
         state.setActiveChannelId(null);
+      }
+    };
+
+    // 🚀 THE REAL-TIME WORKSPACE DELETION RADAR
+    const handleWorkspaceDeleted = (deletedWorkspaceId: string) => {
+      const state = chatState();
+      const updatedWorkspaces = state.workspaces.filter(
+        (w) => w.id !== deletedWorkspaceId,
+      );
+
+      state.setWorkspaces(updatedWorkspaces);
+
+      if (state.activeWorkspaceId === deletedWorkspaceId) {
+        alert("The workspace you were viewing has been deleted by the owner.");
+
+        state.setChannels([]);
+        state.setUsers([]);
+        state.setMessages([]);
+        state.setActiveChannelId(null);
+        state.setSelectedUser(null);
+
+        if (updatedWorkspaces.length > 0) {
+          const nextWs = updatedWorkspaces[0];
+          state.setActiveWorkspaceId(nextWs.id);
+          localStorage.setItem("lastActiveWorkspaceId", nextWs.id);
+        } else {
+          state.setActiveWorkspaceId(null);
+          localStorage.removeItem("lastActiveWorkspaceId");
+          window.location.href = "/create-workspace";
+        }
       }
     };
 
@@ -103,14 +145,15 @@ export const useWorkspaceEvents = (socket: any) => {
     socket.on("member_kicked", handleMemberKicked);
     socket.on("workspace_revoked", handleWorkspaceRevoked);
     socket.on("private_channels_revoked", handlePrivateChannelsRevoked);
+    socket.on("workspace_deleted", handleWorkspaceDeleted);
 
     return () => {
-      // UNBIND ON UNMOUNT (Memory leak prevention)
       socket.off("workspace_member_joined", handleMemberJoined);
       socket.off("member_role_updated", handleRoleUpdated);
       socket.off("member_kicked", handleMemberKicked);
       socket.off("workspace_revoked", handleWorkspaceRevoked);
       socket.off("private_channels_revoked", handlePrivateChannelsRevoked);
+      socket.off("workspace_deleted", handleWorkspaceDeleted);
     };
   }, [socket]);
 };
