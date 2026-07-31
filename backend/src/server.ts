@@ -18,6 +18,10 @@ import { initSocket } from "./sockets/index";
 dotenv.config();
 
 const app: Application = express();
+
+// 🚀 THE FIX: Nginx Proxy Bypass (Rate limiter will now read correct IPs)
+app.set("trust proxy", 1); 
+
 const server = http.createServer(app);
 
 // Initialize WebSockets

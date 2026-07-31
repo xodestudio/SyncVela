@@ -17,11 +17,10 @@ import rateLimit from "express-rate-limit";
 
 const router = Router();
 
-// 🛡️ SECURITY FIX: Brute-Force Protection
-// Ek IP address se 15 minute mein sirf 5 OTP attempts allowed hain.
+// Limiters defined but NOT USED in routes during LOAD TEST
 const otpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: {
     error: "Too many verification attempts. Please try again after 15 minutes.",
   },
@@ -35,11 +34,11 @@ const loginLimiter = rateLimit({
   message: { error: "Too many login attempts. Please cool down." },
 });
 
-// Authentication Routes
+// Authentication Routes (🚀 LIMITERS REMOVED FOR TESTING)
 router.post("/register", registerUser);
-router.post("/login", loginLimiter, loginUser); // Login par limit laga di
-router.post("/verify-otp", otpLimiter, verifyOTPHandler);
-router.post("/resend-otp", otpLimiter, resendOtpHandler);
+router.post("/login", /* loginLimiter, */ loginUser);
+router.post("/verify-otp", /* otpLimiter, */ verifyOTPHandler);
+router.post("/resend-otp", /* otpLimiter, */ resendOtpHandler);
 
 // Google OAuth Route
 router.post("/google", googleLoginHandler);
@@ -48,17 +47,17 @@ router.post("/google", googleLoginHandler);
 router.post("/forgot-password", forgotPasswordHandler);
 router.post("/reset-password", resetPasswordHandler);
 
-// 🚀 ACCOUNT LINKING: authenticated Google user sets a password (OTP-verified)
+// 🚀 ACCOUNT LINKING Routes (LIMITERS REMOVED FOR TESTING)
 router.post(
   "/set-password/request",
   authMiddleware,
-  otpLimiter,
+  /* otpLimiter, */
   requestSetPasswordHandler,
 );
 router.post(
   "/set-password/confirm",
   authMiddleware,
-  otpLimiter,
+  /* otpLimiter, */
   confirmSetPasswordHandler,
 );
 
